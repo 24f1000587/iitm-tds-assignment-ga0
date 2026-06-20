@@ -50,3 +50,7 @@ async def sentiment(data: SentimentRequest):
         })
 
     return {"results": results}
+
+@app.get("/")
+async def root():
+    return {"status": "running"}
