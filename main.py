@@ -54,3 +54,7 @@ async def sentiment(data: SentimentRequest):
 @app.get("/")
 async def root():
     return {"status": "running"}
+
+@app.get("/sentiment")
+async def sentiment_check():
+    return {"message": "Use POST with JSON payload"}
