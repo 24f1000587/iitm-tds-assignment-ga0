@@ -1,8 +1,23 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List
-from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
+import sys
+from io import StringIO
+import traceback
+import re
+import os
 
+load_dotenv()
+# Gemini / AI Pipe
+from google import genai
+from google.genai import types
+
+
+# =====================================================
+# FastAPI App
+# =====================================================
 app = FastAPI()
 
 app.add_middleware(
@@ -13,48 +28,145 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-class SentimentRequest(BaseModel):
-    sentences: List[str]
 
-happy_words = {
-    "love", "great", "awesome", "happy", "good",
-    "excellent", "amazing", "wonderful", "fantastic"
-}
+# =====================================================
+# Request / Response Models
+# =====================================================
+class CodeRequest(BaseModel):
+    code: str
 
-sad_words = {
-    "sad", "terrible", "bad", "hate", "awful",
-    "horrible", "worst", "angry", "upset"
-}
 
-def detect_sentiment(sentence: str):
-    text = sentence.lower()
+class CodeResponse(BaseModel):
+    error: List[int]
+    result: str
 
-    happy_score = sum(word in text for word in happy_words)
-    sad_score = sum(word in text for word in sad_words)
 
-    if happy_score > sad_score:
-        return "happy"
-    elif sad_score > happy_score:
-        return "sad"
-    else:
-        return "neutral"
+class ErrorAnalysis(BaseModel):
+    error_lines: List[int]
 
-@app.post("/sentiment")
-async def sentiment(data: SentimentRequest):
-    results = []
 
-    for sentence in data.sentences:
-        results.append({
-            "sentence": sentence,
-            "sentiment": detect_sentiment(sentence)
-        })
+# =====================================================
+# Part 1: Execute Python Code
+# =====================================================
+def execute_python_code(code: str) -> dict:
+    old_stdout = sys.stdout
+    sys.stdout = StringIO()
 
-    return {"results": results}
+    try:
+        exec(code)
+        output = sys.stdout.getvalue()
 
+        return {
+            "success": True,
+            "output": output
+        }
+
+    except Exception:
+        output = traceback.format_exc()
+
+        return {
+            "success": False,
+            "output": output
+        }
+
+    finally:
+        sys.stdout = old_stdout
+
+
+# =====================================================
+# Extract line number from traceback (faster than AI)
+# =====================================================
+def extract_line_from_traceback(trace: str) -> List[int]:
+    matches = re.findall(r'line (\d+)', trace)
+
+    if matches:
+        return [int(matches[-1])]
+
+    return []
+
+
+# =====================================================
+# Part 2: AI Error Analysis
+# =====================================================
+def analyze_error_with_ai(code: str, tb: str) -> List[int]:
+    client = genai.Client(
+    api_key=os.getenv("AIPIPE_TOKEN"),
+    http_options={
+        "base_url": "https://aipipe.org/openai/v1"
+    }
+)
+
+    prompt = f"""
+Analyze the following Python code and traceback.
+
+Find the exact line number(s) where the error occurred.
+
+CODE:
+{code}
+
+TRACEBACK:
+{tb}
+
+Return only line numbers.
+"""
+
+    response = client.models.generate_content(
+        model="openai/gpt-4.1-nano",
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "error_lines": types.Schema(
+                        type=types.Type.ARRAY,
+                        items=types.Schema(type=types.Type.INTEGER)
+                    )
+                },
+                required=["error_lines"]
+            )
+        )
+    )
+
+    result = ErrorAnalysis.model_validate_json(response.text)
+    return result.error_lines
+
+
+# =====================================================
+# API Endpoint
+# =====================================================
+@app.post("/code-interpreter", response_model=CodeResponse)
+def code_interpreter(request: CodeRequest):
+    execution = execute_python_code(request.code)
+
+    # If success, no AI needed
+    if execution["success"]:
+        return {
+            "error": [],
+            "result": execution["output"]
+        }
+
+    traceback_output = execution["output"]
+
+    # Try regex first
+    error_lines = extract_line_from_traceback(traceback_output)
+
+    # Use AI only if regex fails
+    if not error_lines:
+        error_lines = analyze_error_with_ai(
+            request.code,
+            traceback_output
+        )
+
+    return {
+        "error": error_lines,
+        "result": traceback_output
+    }
+
+
+# =====================================================
+# Health Check
+# =====================================================
 @app.get("/")
-async def root():
-    return {"status": "running"}
-
-@app.get("/sentiment")
-async def sentiment_check():
-    return {"message": "Use POST with JSON payload"}
+def root():
+    return {"message": "Code Interpreter API Running"}
