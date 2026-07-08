@@ -324,7 +324,7 @@ def work(n: int):
     }
 
 
-@app.get("/health")
+@app.get("/healthz")
 def health():
 
     return {
