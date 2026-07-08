@@ -5,7 +5,7 @@ import json
 import logging
 from collections import deque
 from typing import List
-
+from fastapi.responses import Response
 import yaml
 import jwt
 from dotenv import load_dotenv
@@ -45,15 +45,6 @@ dQIDAQAB
 
 app = FastAPI()
 
-ALLOWED_ORIGIN = "https://dash-71emzk.example.com"
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[ALLOWED_ORIGIN],
-    allow_credentials=False,
-    allow_methods=["GET", "OPTIONS"],
-    allow_headers=["*"],
-)
 
 START_TIME = time.time()
 
@@ -77,32 +68,53 @@ def debug():
 @app.middleware("http")
 async def middleware(request: Request, call_next):
 
-    REQUEST_COUNTER.inc()
+    origin = request.headers.get("origin")
 
-    request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+    # Handle CORS preflight
+    if request.method == "OPTIONS":
+        response = Response(status_code=200)
+    else:
+        REQUEST_COUNTER.inc()
 
-    start = time.perf_counter()
+        request_id = request.headers.get(
+            "X-Request-ID",
+            str(uuid.uuid4())
+        )
 
-    response = await call_next(request)
+        start = time.perf_counter()
 
-    process_time = time.perf_counter() - start
+        response = await call_next(request)
 
-    response.headers["X-Request-ID"] = request_id
-    response.headers["X-Process-Time"] = f"{process_time:.6f}"
+        process_time = time.perf_counter() - start
 
-    entry = {
-        "level": "INFO",
-        "ts": time.time(),
-        "path": request.url.path,
-        "request_id": request_id,
-    }
+        response.headers["X-Request-ID"] = request_id
+        response.headers["X-Process-Time"] = f"{process_time:.6f}"
 
-    LOGS.append(entry)
+        entry = {
+            "level": "INFO",
+            "ts": time.time(),
+            "path": request.url.path,
+            "request_id": request_id,
+        }
 
-    logger.info(json.dumps(entry))
+        LOGS.append(entry)
+        logger.info(json.dumps(entry))
+
+    # -------- CORS --------
+
+    if request.url.path == "/stats":
+        # Strict CORS for Question 1
+        if origin == "https://dash-71emzk.example.com":
+            response.headers["Access-Control-Allow-Origin"] = origin
+    else:
+        # Other endpoints
+        if origin:
+            response.headers["Access-Control-Allow-Origin"] = origin
+
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
 
     return response
-
 
 #############################################
 # CONFIG
