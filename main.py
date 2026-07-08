@@ -65,6 +65,12 @@ LOGS = deque(maxlen=1000)
 logger = logging.getLogger("observability")
 logger.setLevel(logging.INFO)
 
+@app.get("/debug")
+def debug():
+    return {
+        "version": "MERGED-340-LINES",
+        "routes": [r.path for r in app.routes],
+    }
 
 @app.middleware("http")
 async def middleware(request: Request, call_next):
