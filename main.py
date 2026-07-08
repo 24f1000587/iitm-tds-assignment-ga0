@@ -45,11 +45,13 @@ dQIDAQAB
 
 app = FastAPI()
 
+ALLOWED_ORIGIN = "https://dash-71emzk.example.com"
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[ALLOWED_ORIGIN, "*"],
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_origins=[ALLOWED_ORIGIN],
+    allow_credentials=False,
+    allow_methods=["GET", "OPTIONS"],
     allow_headers=["*"],
 )
 
