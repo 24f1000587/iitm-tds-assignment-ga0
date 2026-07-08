@@ -1,2 +1,8 @@
 fastapi
 uvicorn
+python-dotenv
+PyYAML
+PyJWT
+cryptography
+prometheus_client
+pydantic
