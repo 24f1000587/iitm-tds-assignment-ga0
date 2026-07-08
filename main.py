@@ -7,7 +7,7 @@ import time
 
 app = FastAPI()
 
-EMAIL = "YOUR_EMAIL@gmail.com"  # <-- Replace with your IITM email
+EMAIL = "24f1000587@ds.study.iitm.ac.in"  # <-- Replace with your IITM email
 
 # -------------------------------
 # CORS
