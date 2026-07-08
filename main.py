@@ -1,161 +1,89 @@
-from fastapi import FastAPI, Request, Header, HTTPException, Response
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Optional
 import uuid
 import time
-import base64
+from collections import defaultdict
 
 app = FastAPI()
 
-# -----------------------------
+EMAIL = "24f1000587@ds.study.iitm.ac.in"
+
+# ----------------------------
 # CORS
-# -----------------------------
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["Retry-After"],
-)
-
-# -----------------------------
-# Assigned Values
-# -----------------------------
-TOTAL_ORDERS = 40
-RATE_LIMIT = 18
-WINDOW = 10  # seconds
-
-# -----------------------------
-# In-memory storage
-# -----------------------------
-idempotency_store = {}
-
-# client_id -> timestamps
-rate_limit_store = {}
-
-# Fixed catalog of orders
-orders = [
-    {
-        "id": i,
-        "item": f"Item {i}",
-        "amount": i * 100
-    }
-    for i in range(1, TOTAL_ORDERS + 1)
+# ----------------------------
+ALLOWED_ORIGINS = [
+    "https://app-wvb82n.example.com",
+    # Add the exam origin here if they provide one.
+    # Example:
+    # "https://exam.example.com"
 ]
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# -----------------------------
-# Models
-# -----------------------------
-class OrderCreate(BaseModel):
-    item: str = "Sample Item"
-    amount: int = 100
-
-
-# -----------------------------
+# ----------------------------
 # Rate Limiter
-# -----------------------------
+# ----------------------------
+WINDOW = 10  # seconds
+LIMIT = 9
+
+client_requests = defaultdict(list)
+
+
 @app.middleware("http")
 async def rate_limit(request: Request, call_next):
+    client_id = request.headers.get("X-Client-Id", "anonymous")
 
-    client = request.headers.get("X-Client-Id")
+    now = time.time()
 
-    if client:
-        now = time.time()
+    timestamps = client_requests[client_id]
 
-        timestamps = rate_limit_store.get(client, [])
+    # Remove expired timestamps
+    while timestamps and now - timestamps[0] > WINDOW:
+        timestamps.pop(0)
 
-        timestamps = [t for t in timestamps if now - t < WINDOW]
-
-        if len(timestamps) >= RATE_LIMIT:
-            retry = WINDOW - (now - timestamps[0])
-            retry = max(1, int(retry))
-
-            return Response(
-                content="Rate limit exceeded",
-                status_code=429,
-                headers={
-                    "Retry-After": str(retry)
-                }
-            )
-
-        timestamps.append(now)
-        rate_limit_store[client] = timestamps
-
-    return await call_next(request)
-
-
-# -----------------------------
-# POST /orders
-# -----------------------------
-@app.post("/orders", status_code=201)
-def create_order(
-    order: OrderCreate,
-    idempotency_key: Optional[str] = Header(None)
-):
-
-    if not idempotency_key:
-        raise HTTPException(
-            status_code=400,
-            detail="Idempotency-Key header required"
+    if len(timestamps) >= LIMIT:
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Rate limit exceeded"},
         )
 
-    if idempotency_key in idempotency_store:
-        return idempotency_store[idempotency_key]
+    timestamps.append(now)
 
-    created = {
-        "id": str(uuid.uuid4()),
-        "item": order.item,
-        "amount": order.amount
-    }
-
-    idempotency_store[idempotency_key] = created
-
-    return created
+    response = await call_next(request)
+    return response
 
 
-# -----------------------------
-# Cursor helpers
-# -----------------------------
-def encode_cursor(index: int):
-    return base64.b64encode(str(index).encode()).decode()
+# ----------------------------
+# Request Context Middleware
+# ----------------------------
+@app.middleware("http")
+async def request_context(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID")
+
+    if not request_id:
+        request_id = str(uuid.uuid4())
+
+    request.state.request_id = request_id
+
+    response = await call_next(request)
+
+    response.headers["X-Request-ID"] = request_id
+    return response
 
 
-def decode_cursor(cursor: Optional[str]):
-    if not cursor:
-        return 0
-
-    try:
-        return int(base64.b64decode(cursor).decode())
-    except:
-        return 0
-
-
-# -----------------------------
-# GET /orders
-# -----------------------------
-@app.get("/orders")
-def list_orders(limit: int = 10, cursor: Optional[str] = None):
-
-    start = decode_cursor(cursor)
-
-    end = min(start + limit, TOTAL_ORDERS)
-
-    items = orders[start:end]
-
-    next_cursor = None
-
-    if end < TOTAL_ORDERS:
-        next_cursor = encode_cursor(end)
-
+# ----------------------------
+# Endpoint
+# ----------------------------
+@app.get("/ping")
+async def ping(request: Request):
     return {
-        "items": items,
-        "next_cursor": next_cursor
+        "email": EMAIL,
+        "request_id": request.state.request_id,
     }
-
-
-@app.get("/")
-def root():
-    return {"status": "running"}
