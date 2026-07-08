@@ -1,0 +1,3 @@
+workers: 5
+log_level: debug
+api_key: key-y26ny2qo12
