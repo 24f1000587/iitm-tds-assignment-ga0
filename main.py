@@ -14,6 +14,7 @@ EMAIL = "24f1000587@ds.study.iitm.ac.in"
 # ----------------------------
 ALLOWED_ORIGINS = [
     "https://app-wvb82n.example.com",
+    "https://exam.sanand.workers.dev"
     # Add the exam origin here if they provide one.
     # Example:
     # "https://exam.example.com"
